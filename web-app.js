@@ -11,12 +11,26 @@ document.addEventListener('DOMContentLoaded', () => {
     const downloadSection = document.getElementById('downloadSection');
     const downloadLink = document.getElementById('downloadLink');
     const downloadReportLink = document.getElementById('downloadReportLink');
+    // const bpoSwitch = document.getElementById('bpoSwitch');
+
+    // Inicializar tooltips do Bootstrap
+    const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    tooltipTriggerList.map(function (tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl);
+    });
 
     // Armazenamento de arquivos
     const filesData = {
         source: [],
-        controle: null
+        controle: null,
+        isBPO: false
     };
+
+    // Event listener para o switch de BPO
+    // bpoSwitch.addEventListener('change', () => {
+    //     filesData.isBPO = bpoSwitch.checked;
+    //     log(`Opção de BPO ${bpoSwitch.checked ? 'ativada' : 'desativada'}`);
+    // });
 
     // Configurar eventos de upload
     sourceUploadArea.addEventListener('click', () => sourceFileInput.click());
@@ -209,6 +223,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 let colunaId = null;
                 let colunaData = null;
                 let colunaValor = null;
+                let colunaBPO = null;
                 
                 // Possíveis nomes para a coluna de ID
                 const idColunas = ['Referência do Aplicativo', 'ID', 'ID Aplicativo', 'Código', 'Referencia'];
@@ -236,6 +251,16 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (colunas.includes(col)) {
                         colunaValor = col;
                         log(`Coluna de valor encontrada: ${colunaValor}`);
+                        break;
+                    }
+                }
+                
+                // Verificar se existe coluna BPO
+                const bpoColunas = ['BPO', 'Bpo', 'bpo', 'É BPO'];
+                for (const col of bpoColunas) {
+                    if (colunas.includes(col)) {
+                        colunaBPO = col;
+                        log(`Coluna BPO encontrada: ${colunaBPO}`);
                         break;
                     }
                 }
@@ -329,9 +354,23 @@ document.addEventListener('DOMContentLoaded', () => {
                     
                     // Obter a data da coluna identificada
                     mesReferencia = colunaData ? excelDateToJSDate(linha[colunaData]) : new Date(); // Usar data atual se não encontrar
-                    console.log(mesReferencia)
                     // Obter o valor da coluna identificada
                     valorComissao = parseFloat(linha[colunaValor]) || 0;
+                    
+                    // Determinar se é um registro BPO
+                    let isBPO = filesData.isBPO; // Valor padrão do switch button
+                    
+                    // Se existe coluna BPO no arquivo, usar esse valor com precedência
+                    if (colunaBPO && linha[colunaBPO] !== undefined) {
+                        const valorBPO = linha[colunaBPO].toString().trim().toLowerCase();
+                        // Verificar se o valor é 'sim' ou equivalente
+                        if (valorBPO === 'sim' || valorBPO === 's' || valorBPO === 'true' || valorBPO === '1' || valorBPO === 'yes' || valorBPO === 'y') {
+                            isBPO = true;
+                        } else if (valorBPO === 'não' || valorBPO === 'nao' || valorBPO === 'n' || valorBPO === 'false' || valorBPO === '0' || valorBPO === 'no') {
+                            isBPO = false;
+                        }
+                        // Em caso de valor não reconhecido, manter o padrão do switch
+                    }
                     
                     // Formatar o mês como string (ex: "Jan", "Fev", etc.)
                     const meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
@@ -344,6 +383,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         mesFormatado,
                         valorComissao: parseFloat(valorComissao),
                         fonte: arquivo.name,
+                        isBPO: isBPO, // Adicionar a flag de BPO aos dados
                         linhaOriginal: linha
                     });
                     
@@ -465,7 +505,10 @@ document.addEventListener('DOMContentLoaded', () => {
             
             // Para cada registro válido, atualizar a planilha de controle
             for (const registro of registros) {
-                const { idReferencia, mesFormatado, valorComissao } = registro;
+                const { idReferencia, mesFormatado, valorComissao, isBPO } = registro;
+                
+                // Verificar se o registro segue regras de BPO
+                log(`Processando registro ${idReferencia}: ${isBPO ? 'BPO' : 'Não BPO'}`);
                 
                 if (!idReferencia || !mesFormatado || !valorComissao) {
                     continue; // Pular registros inválidos
@@ -590,9 +633,35 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 }
                 
-                // Se o valor atual for diferente do novo valor, atualizar
-                if (Math.abs(valorAtualNumerico - valorComissao) > 0.01) {
-                    log(`Atualizando ${idReferencia} - ${mesFormatado}: ${valorAtual || 'vazio'} -> ${valorComissao}`);
+                // Verificar se devemos atualizar esta célula com base nas regras de BPO
+                let deveAtualizar = true;
+                
+                // Verificar a coluna "É BPO" na planilha controle (se existir)
+                const colunaBPOIndex = colunasPorNome['É BPO'] || colunasPorNome['BPO'];
+                let bpoNaPlanilhaControle = false;
+                
+                if (colunaBPOIndex) {
+                    const cellBPO = worksheet.getRow(linhaEncontrada).getCell(colunaBPOIndex);
+                    const valorBPO = cellBPO.value;
+                    
+                    if (valorBPO) {
+                        const strBPO = valorBPO.toString().toLowerCase();
+                        bpoNaPlanilhaControle = (strBPO === 'sim' || strBPO === 's' || strBPO === 'true' || strBPO === '1');
+                        log(`Valor BPO na planilha de controle para ${idReferencia}: ${bpoNaPlanilhaControle ? 'BPO' : 'Não BPO'}`);
+                    }
+                }
+                
+                // Regras de atualização baseadas no status de BPO:
+                // Se o registro é BPO mas a planilha controle não é BPO, não atualizar
+                // Se o registro não é BPO mas a planilha controle é BPO, não atualizar
+                if (colunaBPOIndex && isBPO !== bpoNaPlanilhaControle) {
+                    log(`Ignorando atualização para ${idReferencia} - ${mesFormatado} - Status BPO incompatível`, 'warning');
+                    deveAtualizar = false;
+                }
+                
+                // Se o valor atual for diferente do novo valor e devemos atualizar, atualizar
+                if (deveAtualizar && Math.abs(valorAtualNumerico - valorComissao) > 0.01) {
+                    log(`Atualizando ${idReferencia} - ${mesFormatado}: ${valorAtual || 'vazio'} -> ${valorComissao} ${isBPO ? '[BPO]' : ''}`);
                     
                     // Atualizar o valor na célula
                     cell.value = valorComissao;
@@ -604,6 +673,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         colunaMes,
                         valorAntigo: valorAtual || 'vazio',
                         valorNovo: valorComissao,
+                        isBPO: isBPO,
                         celula: `${worksheet.getColumn(colunaIndex).letter}${linhaEncontrada}`
                     });
                     
@@ -687,14 +757,14 @@ document.addEventListener('DOMContentLoaded', () => {
             log('Processando arquivos source...', 'info');
             const dadosExtraidos = await processarArquivosExcel(filesData.source);
             
-            console.log(dadosExtraidos);
             // Filtrar registros válidos
             log('Filtrando registros válidos...', 'info');
             const registrosValidos = dadosExtraidos.filter(item => 
                 item.idReferencia && 
                 item.mesReferencia && 
                 !isNaN(item.valorComissao) && 
-                item.valorComissao > 0
+                item.valorComissao > 0 &&
+                !item.isBPO
             );
             
             log(`Total de registros válidos: ${registrosValidos.length}`, 'success');
