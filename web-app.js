@@ -523,15 +523,47 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 // Verificar se a coluna existe na planilha
                 let colunaIndex = colunasPorNome[colunaMes];
+                log(`Procurando coluna ${colunaMes} para mês ${mesFormatado}. Encontrada: ${colunaIndex ? 'Sim' : 'Não'}`);
+                
+                // Se não encontrou pelo nome exato, tentar nomes alternativos
                 if (!colunaIndex) {
-                    const colunasRelacionadas = Object.keys(colunasPorNome).filter(coluna => 
-                        coluna.toLowerCase().includes(mesFormatado.toLowerCase()) || 
-                        (mesFormatado === 'Jun' && coluna.toLowerCase().includes('junho')) ||
-                        (mesFormatado === 'Mai' && coluna.toLowerCase().includes('maio'))
-                    );
+                    // Mapeamento de nomes alternativos para meses
+                    const nomesAlternativos = {
+                        'Jan': ['janeiro', 'jan'],
+                        'Fev': ['fevereiro', 'fev'],
+                        'Mar': ['março', 'mar'],
+                        'Abr': ['abril', 'abr'],
+                        'Mai': ['maio', 'mai'],
+                        'Jun': ['junho', 'jun'],
+                        'Jul': ['julho', 'jul'],
+                        'Ago': ['agosto', 'ago'],
+                        'Set': ['setembro', 'set'],
+                        'Out': ['outubro', 'out'],
+                        'Nov': ['novembro', 'nov'],
+                        'Dez': ['dezembro', 'dez']
+                    };
+                    
+                    // Obter alternativas para o mês atual
+                    const alternativas = nomesAlternativos[mesFormatado] || [];
+                    log(`Buscando alternativas para ${mesFormatado}: ${alternativas.join(', ')}`);
+                    
+                    // Procurar colunas que contenham qualquer uma das alternativas
+                    const colunasRelacionadas = Object.keys(colunasPorNome).filter(coluna => {
+                        const colunaLower = coluna.toLowerCase();
+                        return colunaLower.includes(mesFormatado.toLowerCase()) || 
+                               alternativas.some(alt => colunaLower.includes(alt));
+                    });
+                    
+                    log(`Colunas relacionadas encontradas: ${colunasRelacionadas.length}`);
                     
                     if (colunasRelacionadas.length > 0) {
-                        log(`Coluna alternativa encontrada para ${mesFormatado}: ${colunasRelacionadas[0]}`);
+                        // Mostrar todas as colunas encontradas para debug
+                        colunasRelacionadas.forEach(col => {
+                            log(`Coluna alternativa candidata para ${mesFormatado}: ${col}`);
+                        });
+                        
+                        // Usar a primeira coluna alternativa encontrada
+                        log(`Usando coluna alternativa para ${mesFormatado}: ${colunasRelacionadas[0]}`);
                         colunaIndex = colunasPorNome[colunasRelacionadas[0]];
                     }
                 }
@@ -659,9 +691,17 @@ document.addEventListener('DOMContentLoaded', () => {
                     deveAtualizar = false;
                 }
                 
+                // Verificar melhor se a célula está vazia
+                const celulaEstaVazia = valorAtual === null || valorAtual === undefined || 
+                                        valorAtual === '' || 
+                                        (typeof valorAtual === 'object' && (!valorAtual.result || valorAtual.result === ''));
+                
+                // Log para debug do valor atual
+                log(`Valor atual para ${idReferencia} - ${mesFormatado}: ${celulaEstaVazia ? 'VAZIO' : valorAtualNumerico} (coluna: ${colunaMes})`);
+                
                 // Se o valor atual for diferente do novo valor e devemos atualizar, atualizar
-                if (deveAtualizar && Math.abs(valorAtualNumerico - valorComissao) > 0.01) {
-                    log(`Atualizando ${idReferencia} - ${mesFormatado}: ${valorAtual || 'vazio'} -> ${valorComissao} ${isBPO ? '[BPO]' : ''}`);
+                if (deveAtualizar && (celulaEstaVazia || Math.abs(valorAtualNumerico - valorComissao) > 0.01)) {
+                    log(`Atualizando ${idReferencia} - ${mesFormatado}: ${valorAtual || 'VAZIO'} -> ${valorComissao} ${isBPO ? '[BPO]' : ''}`);
                     
                     // Atualizar o valor na célula
                     cell.value = valorComissao;
@@ -671,15 +711,17 @@ document.addEventListener('DOMContentLoaded', () => {
                         idReferencia,
                         mesReferencia: mesFormatado,
                         colunaMes,
-                        valorAntigo: valorAtual || 'vazio',
+                        valorAntigo: valorAtual || 'VAZIO',
                         valorNovo: valorComissao,
                         isBPO: isBPO,
                         celula: `${worksheet.getColumn(colunaIndex).letter}${linhaEncontrada}`
                     });
                     
                     atualizacoes++;
+                } else if (!deveAtualizar) {
+                    log(`Não atualizado ${idReferencia} - ${mesFormatado}: Regras de BPO não permitem`);
                 } else {
-                    log(`Valor já atualizado para ${idReferencia} - ${mesFormatado}: ${valorComissao}`);
+                    log(`Valor igual ao existente para ${idReferencia} - ${mesFormatado}: ${valorComissao}`);
                 }
             }
             
