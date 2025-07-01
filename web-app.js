@@ -169,60 +169,175 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Função para processar os arquivos Excel e extrair as informações necessárias
     async function processarArquivosExcel(arquivos) {
-        log(`Processando ${arquivos.length} arquivos Excel...`);
+        log('Processando arquivos Excel...');
         
-        // Array para armazenar todos os dados extraídos
         const dadosExtraidos = [];
         
         // Processar cada arquivo
         for (const arquivo of arquivos) {
-            log(`Processando arquivo: ${arquivo.name}`);
-            
             try {
-                // Ler o arquivo Excel
+                log(`Processando arquivo: ${arquivo.name}`);
+                
+                // Verificar se é um arquivo Excel
+                if (!arquivo.name.endsWith('.xlsx') && !arquivo.name.endsWith('.xls')) {
+                    log(`Arquivo ignorado: ${arquivo.name} não é um arquivo Excel válido`, 'warning');
+                    continue;
+                }
+                
                 const arrayBuffer = await arquivo.arrayBuffer();
                 const workbook = XLSX.read(arrayBuffer, { type: 'array' });
-                const sheetName = workbook.SheetNames[0];
-                const worksheet = workbook.Sheets[sheetName];
-                const dados = XLSX.utils.sheet_to_json(worksheet);
                 
-                log(`Extraindo dados de ${dados.length} linhas do arquivo ${arquivo.name}`);
+                // Processar a primeira planilha
+                const primeiraSheetNome = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[primeiraSheetNome];
                 
-                // Extrair informações de cada linha
-                const dadosArquivo = dados.map(linha => {
-                    // Identificar o tipo de arquivo (omnie_1 ou omnie_2)
-                    const isOmnie1 = arquivo.name.includes('omnie_1');
+                // Converter para JSON
+                const linhas = XLSX.utils.sheet_to_json(worksheet, { raw: false });
+                log(`Encontradas ${linhas.length} linhas em ${arquivo.name}`);
+                
+                if (linhas.length === 0) {
+                    log(`Arquivo vazio ou sem dados tabulares: ${arquivo.name}`, 'warning');
+                    continue;
+                }
+                
+                // Analisar cabeçalhos para determinar o formato da planilha
+                const primeiraLinha = linhas[0];
+                const colunas = Object.keys(primeiraLinha);
+                log(`Colunas detectadas: ${colunas.join(', ')}`);
+                
+                // Identificar colunas importantes
+                let colunaId = null;
+                let colunaData = null;
+                let colunaValor = null;
+                
+                // Possíveis nomes para a coluna de ID
+                const idColunas = ['Referência do Aplicativo', 'ID', 'ID Aplicativo', 'Código', 'Referencia'];
+                for (const col of idColunas) {
+                    if (colunas.includes(col)) {
+                        colunaId = col;
+                        log(`Coluna de ID encontrada: ${colunaId}`);
+                        break;
+                    }
+                }
+                
+                // Possíveis nomes para a coluna de data
+                const dataColunas = ['Emissão', 'Data', 'Data Pagamento', 'Data Emissão'];
+                for (const col of dataColunas) {
+                    if (colunas.includes(col)) {
+                        colunaData = col;
+                        log(`Coluna de data encontrada: ${colunaData}`);
+                        break;
+                    }
+                }
+                
+                // Possíveis nomes para a coluna de valor
+                const valorColunas = ['Valor do Repasse', 'Comissão R$', 'Comissão', 'Valor', 'Repasse'];
+                for (const col of valorColunas) {
+                    if (colunas.includes(col)) {
+                        colunaValor = col;
+                        log(`Coluna de valor encontrada: ${colunaValor}`);
+                        break;
+                    }
+                }
+                
+                // Verificar se encontramos as colunas necessárias
+                if (!colunaId) {
+                    log(`Não foi possível identificar a coluna de ID no arquivo ${arquivo.name}`, 'error');
+                    continue;
+                }
+                
+                if (!colunaData) {
+                    log(`Não foi possível identificar a coluna de data no arquivo ${arquivo.name}`, 'warning');
+                }
+                
+                if (!colunaValor) {
+                    log(`Não foi possível identificar a coluna de valor no arquivo ${arquivo.name}`, 'error');
+                    continue;
+                }
+                
+                // Processar cada linha para extrair informações necessárias
+                let linhasProcessadas = 0;
+                
+                for (const linha of linhas) {
+                    if (!linha[colunaId]) continue;
                     
-                    // Extrair o ID de referência
-                    const idCompleto = linha['Referência do Aplicativo'] || '';
+                    const idCompleto = linha[colunaId];
                     const idReferencia = extrairIdReferencia(idCompleto);
                     
-                    // Extrair o mês de referência e valor da comissão com base no tipo de arquivo
+                    if (!idReferencia) {
+                        continue;
+                    }
+                    
+                    // Extrair o mês de referência e valor da comissão
                     let mesReferencia, valorComissao;
                     
-                    // Função para converter número serial do Excel para objeto Date
+                    // Função para converter data (número serial do Excel ou string) para objeto Date
                     function excelDateToJSDate(excelDate) {
-                        if (!excelDate || isNaN(excelDate)) return null;
-                        const EXCEL_EPOCH = new Date(1899, 11, 30); // 30/12/1899
-                        const millisecondsPerDay = 24 * 60 * 60 * 1000;
-                        return new Date(EXCEL_EPOCH.getTime() + excelDate * millisecondsPerDay);
+                        if (!excelDate) return null;
+                        
+                        // Verificar se é uma string de data (ex: "22/05/2025" ou "2025-05-22")
+                        if (typeof excelDate === 'string') {
+                            // Tentar formatos comuns no Brasil e internacional
+                            let dataParts;
+                            
+                            // Tentar formato DD/MM/YYYY
+                            if (excelDate.includes('/')) {
+                                dataParts = excelDate.split('/');
+                                if (dataParts.length === 3) {
+                                    const day = parseInt(dataParts[0], 10);
+                                    const month = parseInt(dataParts[1], 10) - 1; // Meses em JS são 0-indexed
+                                    const year = parseInt(dataParts[2], 10);
+                                    if (!isNaN(day) && !isNaN(month) && !isNaN(year)) {
+                                        return new Date(year, month, day);
+                                    }
+                                }
+                            }
+                            
+                            // Tentar formato YYYY-MM-DD
+                            if (excelDate.includes('-')) {
+                                dataParts = excelDate.split('-');
+                                if (dataParts.length === 3) {
+                                    const year = parseInt(dataParts[0], 10);
+                                    const month = parseInt(dataParts[1], 10) - 1; // Meses em JS são 0-indexed
+                                    const day = parseInt(dataParts[2], 10);
+                                    if (!isNaN(day) && !isNaN(month) && !isNaN(year)) {
+                                        return new Date(year, month, day);
+                                    }
+                                }
+                            }
+                            
+                            // Se nenhum formato conhecido, tentar o construtor Date diretamente
+                            const dateObj = new Date(excelDate);
+                            if (!isNaN(dateObj.getTime())) {
+                                return dateObj;
+                            }
+                            
+                            console.log(`Não foi possível converter a data: ${excelDate}`);
+                            return null;
+                        }
+                        
+                        // Se for um número, assumir que é o formato serial do Excel
+                        const excelNumber = parseFloat(excelDate);
+                        if (!isNaN(excelNumber)) {
+                            const EXCEL_EPOCH = new Date(1899, 11, 30); // 30/12/1899
+                            const millisecondsPerDay = 24 * 60 * 60 * 1000;
+                            return new Date(EXCEL_EPOCH.getTime() + excelNumber * millisecondsPerDay);
+                        }
+                        
+                        return null;
                     }
                     
-                    if (isOmnie1) {
-                        // Para omnie_1.xlsx - mês do recebimento e valor do repasse
-                        mesReferencia = excelDateToJSDate(linha['Recebto.']);
-                        valorComissao = linha['Valor do Repasse'] || 0;
-                    } else {
-                        // Para omnie_2.xlsx - mês da emissão e valor da comissão
-                        mesReferencia = excelDateToJSDate(linha['Emissão']);
-                        valorComissao = linha['Comissão R$'] || 0;
-                    }
+                    // Obter a data da coluna identificada
+                    mesReferencia = colunaData ? excelDateToJSDate(linha[colunaData]) : new Date(); // Usar data atual se não encontrar
+                    console.log(mesReferencia)
+                    // Obter o valor da coluna identificada
+                    valorComissao = parseFloat(linha[colunaValor]) || 0;
                     
                     // Formatar o mês como string (ex: "Jan", "Fev", etc.)
                     const meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
                     const mesFormatado = mesReferencia ? meses[mesReferencia.getMonth()] : 'N/A';
                     
-                    return {
+                    dadosExtraidos.push({
                         idReferencia,
                         idCompleto,
                         mesReferencia,
@@ -230,11 +345,12 @@ document.addEventListener('DOMContentLoaded', () => {
                         valorComissao: parseFloat(valorComissao),
                         fonte: arquivo.name,
                         linhaOriginal: linha
-                    };
-                });
+                    });
+                    
+                    linhasProcessadas++;
+                }
                 
-                // Adicionar os dados extraídos ao array principal
-                dadosExtraidos.push(...dadosArquivo);
+                log(`Processadas ${linhasProcessadas} linhas válidas do arquivo ${arquivo.name}`);
                 
             } catch (erro) {
                 log(`Erro ao processar o arquivo ${arquivo.name}: ${erro.message}`, 'error');
@@ -508,6 +624,7 @@ document.addEventListener('DOMContentLoaded', () => {
             relatorioConteudo += `Total de registros processados: ${registros.length}\n`;
             relatorioConteudo += `Total de atualizações realizadas: ${atualizacoes}\n\n`;
     
+           
             if (celulasAlteradas.length > 0) {
                 relatorioConteudo += `Detalhamento das alterações:\n`;
                 celulasAlteradas.forEach((celula, index) => {
@@ -570,6 +687,7 @@ document.addEventListener('DOMContentLoaded', () => {
             log('Processando arquivos source...', 'info');
             const dadosExtraidos = await processarArquivosExcel(filesData.source);
             
+            console.log(dadosExtraidos);
             // Filtrar registros válidos
             log('Filtrando registros válidos...', 'info');
             const registrosValidos = dadosExtraidos.filter(item => 
