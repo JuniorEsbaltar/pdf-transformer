@@ -507,12 +507,12 @@ document.addEventListener('DOMContentLoaded', () => {
             let relatorioConteudo = `RELATÓRIO DE ALTERAÇÕES - ${new Date().toLocaleString()}\n\n`;
             relatorioConteudo += `Total de registros processados: ${registros.length}\n`;
             relatorioConteudo += `Total de atualizações realizadas: ${atualizacoes}\n\n`;
-            
+    
             if (celulasAlteradas.length > 0) {
                 relatorioConteudo += `Detalhamento das alterações:\n`;
                 celulasAlteradas.forEach((celula, index) => {
                     relatorioConteudo += `${index + 1}. ID: ${celula.idReferencia} - Mês: ${celula.mesReferencia} (Célula: ${celula.celula})\n`;
-                    relatorioConteudo += `   Valor anterior: ${celula.valorAntigo}\n`;
+                    relatorioConteudo += `   Valor anterior: ${celula.valorAntigo.result}\n`;
                     relatorioConteudo += `   Valor atual: ${celula.valorNovo}\n\n`;
                 });
             }
