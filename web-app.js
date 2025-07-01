@@ -253,26 +253,60 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             // Ler o arquivo de controle
             const arrayBuffer = await arquivoControle.arrayBuffer();
-            const workbook = new ExcelJS.Workbook();
-            await workbook.xlsx.load(arrayBuffer);
             
+            // Primeiro lemos com XLSX para obter os valores já calculados das fórmulas
+            log('Lendo valores calculados com SheetJS...');
+            const workbookXLSX = XLSX.read(arrayBuffer, { type: 'array' });
             const sheetName = "APPs";
-            const worksheet = workbook.getWorksheet(sheetName);
-            if (!worksheet) {
+            const sheetXLSX = workbookXLSX.Sheets[sheetName];
+            
+            if (!sheetXLSX) {
                 throw new Error(`Planilha "${sheetName}" não encontrada na planilha de controle.`);
             }
             
-            // Obter os cabeçalhos e criar mapa de colunas
+            // Converter a planilha para um array de objetos com os valores calculados
+            const valoresCalculados = XLSX.utils.sheet_to_json(sheetXLSX, { header: 1, raw: false });
+            log(`Leitura concluída. Foram encontradas ${valoresCalculados.length} linhas.`);
+            
+            // Agora carregamos com ExcelJS para manter formatação e editar
+            log('Carregando planilha com ExcelJS para preservar formatação...');
+            const workbook = new ExcelJS.Workbook();
+            await workbook.xlsx.load(arrayBuffer);
+            
+            const worksheet = workbook.getWorksheet(sheetName);
+            if (!worksheet) {
+                throw new Error(`Planilha "${sheetName}" não encontrada na planilha de controle (ExcelJS).`);
+            }
+            
+            // Obter os cabeçalhos da planilha Excel (para preservar o comportamento original)
             const headerRow = worksheet.getRow(1);
             const headers = [];
             const colunasPorNome = {};
             
             headerRow.eachCell({ includeEmpty: false }, (cell, colNumber) => {
-                headers[colNumber] = cell.value;
-                if (cell.value) {
-                    colunasPorNome[cell.value] = colNumber;
+                const cellValue = cell.value ? cell.value.toString() : '';
+                headers[colNumber] = cellValue;
+                if (cellValue) {
+                    colunasPorNome[cellValue] = colNumber;
                 }
             });
+            
+            // Criar um mapeamento para valores calculados
+            const xlsxHeaders = valoresCalculados[0] || [];
+            const colunaXlsxParaExcelJS = {};
+            
+            xlsxHeaders.forEach((header, xlsxIndex) => {
+                if (header) {
+                    // Encontrar o índice correspondente em ExcelJS
+                    Object.keys(colunasPorNome).forEach(key => {
+                        if (key.toString() === header.toString()) {
+                            colunaXlsxParaExcelJS[xlsxIndex] = colunasPorNome[key];
+                        }
+                    });
+                }
+            });
+            
+            log(`Mapeamento de colunas concluído. Encontradas ${Object.keys(colunasPorNome).length} colunas.`);
             
             // Identificar a coluna de IDs
             let colunaId = null;
@@ -355,30 +389,68 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (colunaIdIndex) {
                     log(`Buscando ID ${idReferencia} na coluna ${colunaId}...`);
                     
-                    // Buscar em todas as linhas da planilha
-                    let linhaAtual = 2; // Começar após o cabeçalho
-                    let celulaEncontrada = false;
+                    // Buscar o ID nos dados obtidos via SheetJS (que já tem os valores calculados)
+                    log(`Buscando ID ${idReferencia} nos dados do SheetJS...`);
                     
-                    while (!celulaEncontrada && linhaAtual <= worksheet.rowCount) {
-                        const cell = worksheet.getRow(linhaAtual).getCell(colunaIdIndex);
-                        let valorCelula = '';
-                        
-                        if (cell.text) valorCelula = cell.text;
-                        else if (cell.value) {
-                            valorCelula = cell.value.toString();
+                    // Primeiro, encontrar o índice da coluna no SheetJS
+                    const xlsxHeaderRow = valoresCalculados[0] || [];
+                    let xlsxColIndex = -1;
+                    
+                    xlsxHeaderRow.forEach((header, index) => {
+                        if (header && header.toString() === colunaId) {
+                            xlsxColIndex = index;
                         }
+                    });
+                    
+                    if (xlsxColIndex === -1) {
+                        log(`Aviso: Não foi possível encontrar a coluna ${colunaId} nos dados do SheetJS`, 'warning');
+                    } else {
+                        log(`Coluna ${colunaId} encontrada no índice ${xlsxColIndex} do SheetJS`);
                         
-                        // Verificar se o valor da célula contém o ID procurado
-                        if (valorCelula && valorCelula.includes(idReferencia)) {
-                            log(`ID ${idReferencia} encontrado na linha ${linhaAtual}`);
-                            linhaEncontrada = linhaAtual;
-                            celulaEncontrada = true;
-                            break;
+                        for (let i = 1; i < valoresCalculados.length; i++) { // Começamos do 1 para pular o cabeçalho
+                            const linha = valoresCalculados[i];
+                            if (!linha) continue;
+                            
+                            const valorCelulaCalc = linha[xlsxColIndex];
+                            
+                            if (valorCelulaCalc && valorCelulaCalc.toString().includes(idReferencia)) {
+                                log(`ID ${idReferencia} encontrado na linha ${i + 1} (via SheetJS)`); // +1 porque i é 0-indexed mas as linhas na UI são 1-indexed
+                                linhaEncontrada = i + 1; // +1 para ajustar para a linha real no ExcelJS
+                                celulaEncontrada = true;
+                                break;
+                            }
                         }
+                    }
                         
-                        linhaAtual++;
+                    if (!celulaEncontrada) {
+                        // Fallback para o método antigo se não encontrar
+                        let linhaAtual = 2; // Começar após o cabeçalho
+                        
+                        while (!celulaEncontrada && linhaAtual <= worksheet.rowCount) {
+                            const cell = worksheet.getRow(linhaAtual).getCell(colunaIdIndex);
+                            let valorCelula = '';
+                            
+                            if (cell.result !== undefined) {
+                                valorCelula = cell.result;
+                            } else if (cell.value && typeof cell.value === 'object' && cell.value.result !== undefined) {
+                                valorCelula = cell.value.result;
+                            } else if (cell.text) {
+                                valorCelula = cell.text;
+                            } else if (cell.value) {
+                                valorCelula = cell.value.toString();
+                            }
+                            
+                            if (valorCelula && valorCelula.includes(idReferencia)) {
+                                log(`ID ${idReferencia} encontrado na linha ${linhaAtual} (via fallback)`); 
+                                linhaEncontrada = linhaAtual;
+                                celulaEncontrada = true;
+                                break;
+                            }
+                            linhaAtual++;
+                        }
                     }
                 }
+                
                 
                 if (linhaEncontrada === -1) {
                     naoEncontrados.push(idReferencia);
