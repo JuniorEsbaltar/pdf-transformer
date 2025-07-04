@@ -222,6 +222,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Identificar colunas importantes
                 let colunaId = null;
                 let colunaData = null;
+                let colunaRecebto = null; // Nova coluna para recebimento
                 let colunaValor = null;
                 let colunaBPO = null;
                 
@@ -235,12 +236,22 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 }
                 
-                // Possíveis nomes para a coluna de data
+                // Possíveis nomes para a coluna de data de emissão
                 const dataColunas = ['Emissão', 'Data', 'Data Pagamento', 'Data Emissão'];
                 for (const col of dataColunas) {
                     if (colunas.includes(col)) {
                         colunaData = col;
-                        log(`Coluna de data encontrada: ${colunaData}`);
+                        log(`Coluna de data de emissão encontrada: ${colunaData}`);
+                        break;
+                    }
+                }
+                
+                // Possíveis nomes para a coluna de data de recebimento
+                const recbtoColunas = ['Recebto.', 'Recebimento', 'Data Recebimento', 'Data Recebto'];
+                for (const col of recbtoColunas) {
+                    if (colunas.includes(col)) {
+                        colunaRecebto = col;
+                        log(`Coluna de data de recebimento encontrada: ${colunaRecebto}`);
                         break;
                     }
                 }
@@ -293,8 +304,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         continue;
                     }
                     
-                    // Extrair o mês de referência e valor da comissão
-                    let mesReferencia, valorComissao;
+                    // Extrair o mês de referência, mês de recebimento e valor da comissão
+                    let mesReferencia, mesRecebimento, valorComissao;
                     
                     // Função para converter data (número serial do Excel ou string) para objeto Date
                     function excelDateToJSDate(excelDate) {
@@ -352,8 +363,15 @@ document.addEventListener('DOMContentLoaded', () => {
                         return null;
                     }
                     
-                    // Obter a data da coluna identificada
-                    mesReferencia = colunaData ? excelDateToJSDate(linha[colunaData]) : new Date(); // Usar data atual se não encontrar
+                    // Obter a data de emissão da coluna identificada
+                    const dataEmissao = colunaData ? excelDateToJSDate(linha[colunaData]) : null;
+                    
+                    // Obter a data de recebimento da coluna identificada (se existir)
+                    const dataRecebimento = colunaRecebto ? excelDateToJSDate(linha[colunaRecebto]) : null;
+                    
+                    // Se tiver data de recebimento, usar ela como referência, senão usar data de emissão
+                    mesReferencia = dataRecebimento || dataEmissao || new Date(); // Usar data atual se não encontrar
+                    
                     // Obter o valor da coluna identificada
                     valorComissao = parseFloat(linha[colunaValor]) || 0;
                     
@@ -376,6 +394,33 @@ document.addEventListener('DOMContentLoaded', () => {
                     const meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
                     const mesFormatado = mesReferencia ? meses[mesReferencia.getMonth()] : 'N/A';
                     
+                    // Verificar se os meses de emissão e recebimento são diferentes
+                    let mesesDiferentes = false;
+                    let mensagemDiferenca = '';
+                    
+                    if (dataEmissao && dataRecebimento) {
+                        // Verificar se mês ou ano são diferentes
+                        mesesDiferentes = dataEmissao.getMonth() !== dataRecebimento.getMonth() || 
+                                         dataEmissao.getFullYear() !== dataRecebimento.getFullYear();
+                        
+                        // Se forem diferentes, criar uma mensagem detalhada
+                        if (mesesDiferentes) {
+                            // Obter nomes dos meses
+                            const mesesNomes = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+                            const mesEmissao = mesesNomes[dataEmissao.getMonth()];
+                            const mesRecebimento = mesesNomes[dataRecebimento.getMonth()];
+                            const anoEmissao = dataEmissao.getFullYear();
+                            const anoRecebimento = dataRecebimento.getFullYear();
+                            
+                            // Formatar a mensagem
+                            if (anoEmissao !== anoRecebimento) {
+                                mensagemDiferenca = `O mês de recebimento foi em ${mesRecebimento}/${anoRecebimento}, mas a data de emissão é de ${mesEmissao}/${anoEmissao}.`;
+                            } else {
+                                mensagemDiferenca = `O mês de recebimento foi em ${mesRecebimento}, mas a data de emissão é do mês de ${mesEmissao}.`;
+                            }
+                        }
+                    }
+                    
                     dadosExtraidos.push({
                         idReferencia,
                         idCompleto,
@@ -384,6 +429,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         valorComissao: parseFloat(valorComissao),
                         fonte: arquivo.name,
                         isBPO: isBPO, // Adicionar a flag de BPO aos dados
+                        mesesDiferentes, // Flag para indicar se os meses de emissão e recebimento são diferentes
+                        mensagemDiferenca, // Mensagem detalhada sobre a diferença de meses
                         linhaOriginal: linha
                     });
                     
@@ -706,6 +753,28 @@ document.addEventListener('DOMContentLoaded', () => {
                     // Atualizar o valor na célula
                     cell.value = valorComissao;
                     
+                    // Verificar se os meses de emissão e recebimento são diferentes
+                    if (registro.mesesDiferentes) {
+                        const cellRef = `${worksheet.getColumn(colunaIndex).letter}${linhaEncontrada}`;
+                        log(`Meses diferentes detectados para ${idReferencia}, adicionando nota à célula ${cellRef}`);
+                        
+                        // Obter a mensagem detalhada sobre a diferença de meses
+                        const mensagem = registro.mensagemDiferenca || 'ATENÇÃO: Os meses de emissão e recebimento são diferentes.';
+                        
+                        // Adicionar um comentário à célula explicando a diferença de meses
+                        if (worksheet.getCell(cellRef).comment) {
+                            // Se já existe um comentário, atualizá-lo
+                            worksheet.getCell(cellRef).comment.texts = [
+                                {'font': {'size': 12}, 'text': mensagem}
+                            ];
+                        } else {
+                            // Se não existe um comentário, criar um novo
+                            worksheet.getCell(cellRef).note = mensagem;
+                        }
+                        
+                        log(`Célula ${cellRef} com comentário adicionado: "${mensagem}"`);
+                    }
+                    
                     // Registrar a célula alterada para o relatório
                     celulasAlteradas.push({
                         idReferencia,
@@ -714,6 +783,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         valorAntigo: valorAtual || 'VAZIO',
                         valorNovo: valorComissao,
                         isBPO: isBPO,
+                        mesesDiferentes: registro.mesesDiferentes,
                         celula: `${worksheet.getColumn(colunaIndex).letter}${linhaEncontrada}`
                     });
                     
@@ -740,7 +810,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (celulasAlteradas.length > 0) {
                 relatorioConteudo += `Detalhamento das alterações:\n`;
                 celulasAlteradas.forEach((celula, index) => {
-                    relatorioConteudo += `${index + 1}. ID: ${celula.idReferencia} - Mês: ${celula.mesReferencia} (Célula: ${celula.celula})\n`;
+                    relatorioConteudo += `${index + 1}. ID: ${celula.idReferencia} - Mês: ${celula.mesReferencia} (Célula: ${celula.celula})${celula.mesesDiferentes ? ' [MESES DIFERENTES]' : ''}\n`;
                     relatorioConteudo += `   Valor anterior: ${celula.valorAntigo.result}\n`;
                     relatorioConteudo += `   Valor atual: ${celula.valorNovo}\n\n`;
                 });
